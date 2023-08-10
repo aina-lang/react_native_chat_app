@@ -1,0 +1,156 @@
+import React, { useCallback, useEffect, useLayoutEffect, useState } from "react";
+import { GiftedChat } from "react-native-gifted-chat";
+import { View, Text, TouchableOpacity, Image } from "react-native";
+import { collection, addDoc, orderBy, query, where, onSnapshot } from "firebase/firestore";
+import { useNavigation } from "@react-navigation/native";
+import { auth, database, getAuth, signOut } from "../../config/firebase";
+import Ionicons from "react-native-vector-icons/Ionicons";
+import AntIcon from "react-native-vector-icons/AntDesign";
+
+const ChatScreen = ({ route }) => {
+  const { user } = route.params;
+  const [messages, setMessages] = useState([]);
+  const navigation = useNavigation();
+  const [currentUser, setCurrentUser] = useState(null); // Utilisateur actuellement connecté
+
+  useEffect(() => {
+    const authInstance = getAuth();
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      if (user) {
+        setCurrentUser(user);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  const onSignOut = () => {
+    const authInstance = getAuth();
+    signOut(authInstance)
+      .then(() => {
+        console.log("Utilisateur déconnecté avec succès.");
+      })
+      .catch((error) => {
+        console.error("Erreur lors de la déconnexion :", error);
+      });
+  };
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerStyle: {
+        backgroundColor: "rgb(59, 130, 246)",
+        shadowOpacity: 0.5,
+        elevation: 2,
+        height: 80,
+      },
+      headerRight: () => (
+        <TouchableOpacity
+          style={{
+            marginRight: 10,
+          }}
+          onPress={onSignOut}
+        >
+          {/* <MaterialIcons name="logout" size={24} color="white" /> */}
+        </TouchableOpacity>
+      ),
+      headerLeft: () => (
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          <TouchableOpacity
+            style={{ marginLeft: 16 }}
+            onPress={() => {
+              navigation.goBack();
+            }}
+          >
+            <Ionicons name="arrow-back-circle" color={"white"} size={30} />
+          </TouchableOpacity>
+          <TouchableOpacity style={{ flexDirection: "row", alignItems: "center", marginLeft: 20 }}>
+            <Image source={{ uri: "https://i.pravatar.cc/300" }} style={{ width: 50, height: 50, borderRadius: 25 }} />
+            <View style={{ marginLeft: 10 }}>
+              <Text style={{ color: "white", fontSize: 18, fontWeight: "bold" }}>{user.pseudo}</Text>
+              <Text style={{ color: "white" }}>{user.email}</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+      ),
+    });
+  }, [navigation, user]);
+
+  useLayoutEffect(() => {
+    if (currentUser) {
+      const collectionRef = collection(database, "chats");
+      const q = query(
+        collectionRef,
+        orderBy("createdAt", "desc"),
+        where("user.email", "==", currentUser.email),
+        where("user._id", "==", user.id) // Remplacez "user.id" par "user._id"
+      );
+
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        setMessages(
+          snapshot.docs.map((doc) => ({
+            _id: doc.id,
+            createdAt: doc.data().createdAt.toDate(),
+            text: doc.data().text,
+            user: doc.data().user,
+          }))
+        );
+      });
+
+      return unsubscribe;
+    }
+  }, [currentUser, user]);
+
+  const onSend = useCallback((messages = []) => {
+    setMessages((previousMessages) => GiftedChat.append(previousMessages, messages));
+
+    messages.forEach((message) => {
+      const { _id, createdAt, text, user } = message;
+
+      // Vérifiez que toutes les informations de l'utilisateur sont définies
+      if (user && user._id && user.email && user.pseudo) {
+        const recipientUser = {
+          _id: user.email,
+          email: user.email,
+          pseudo: user.pseudo,
+          // Ajoutez d'autres informations de l'utilisateur si nécessaire
+        };
+
+        // Créez un nouvel objet de message avec les informations du destinataire
+        const newMessage = {
+          _id,
+          createdAt,
+          text,
+          user: recipientUser,
+        };
+
+        // Ajoutez le nouveau message à Firestore
+        addDoc(collection(database, "chats"), newMessage)
+          .then(() => {
+            console.log("Message envoyé avec succès !");
+          })
+          .catch((error) => {
+            console.error("Erreur lors de l'envoi du message :", error);
+          });
+      } else {
+        console.error("Les informations de l'utilisateur sont manquantes !");
+      }
+    });
+  }, []);
+
+  return (
+    <View style={{ flex: 1, backgroundColor: "white" }}>
+      <GiftedChat
+        messages={messages}
+        onSend={onSend}
+        user={{
+          _id: currentUser ? currentUser.email : null, // Utilisez l'email de l'utilisateur actuellement connecté comme '_id'
+          avatar: "https://i.pravatar.cc/300",
+        }}
+        recipientUser={{
+          _id: user.email, // Utilisez l'email de l'utilisateur destinataire comme '_id'
+          avatar: "https://i.pravatar.cc/300",
+          name: user.pseudo, // Utilisez le pseudo de l'utilisateur destinataire comme 'name'
+        }}
+        
